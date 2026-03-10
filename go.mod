@@ -1,4 +1,4 @@
-module gitlab.cee.redhat.com/bragctl/oauth2flow
+module github.com/LeGambiArt/oauth2flow
 
 go 1.24.3
 
