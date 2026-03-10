@@ -77,7 +77,7 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 			errCh <- fmt.Errorf("authorization failed: %s", errMsg)
 			return
 		}
-		_, _ = fmt.Fprint(w, "<html><body><h2>Authorization successful</h2><p>You can close this tab.</p></body></html>")
+		_, _ = fmt.Fprint(w, "<html><body><h2>Authorization successful</h2><p>You can close this tab.</p><script>window.close()</script></body></html>")
 		codeCh <- code
 	})
 
