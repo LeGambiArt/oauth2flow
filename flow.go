@@ -77,6 +77,11 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 	// Start local callback server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		if r.URL.Query().Get("state") != state {
 			http.Error(w, "invalid state parameter", http.StatusForbidden)
 			errCh <- fmt.Errorf("callback state mismatch (possible CSRF)")
