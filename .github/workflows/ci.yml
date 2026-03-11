@@ -33,3 +33,6 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race -v ./...
