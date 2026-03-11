@@ -3,6 +3,7 @@ package oauth2flow
 import (
 	"encoding/hex"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -586,5 +587,106 @@ func TestSaveToken_PermissionsPreserved(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("overwrite permissions = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestPKCEVerifierGeneration(t *testing.T) {
+	t.Parallel()
+
+	verifier1 := oauth2.GenerateVerifier()
+
+	// Verify result is non-empty
+	if verifier1 == "" {
+		t.Error("GenerateVerifier() returned empty string")
+	}
+
+	// Verify result matches PKCE verifier format (RFC 7636: 43-128 chars)
+	if len(verifier1) < 43 || len(verifier1) > 128 {
+		t.Errorf("GenerateVerifier() length = %d, want 43-128", len(verifier1))
+	}
+
+	// Verify consists of valid base64url characters
+	// Base64url uses: A-Z, a-z, 0-9, -, _
+	for _, ch := range verifier1 {
+		valid := (ch >= 'A' && ch <= 'Z') ||
+			(ch >= 'a' && ch <= 'z') ||
+			(ch >= '0' && ch <= '9') ||
+			ch == '-' || ch == '_'
+		if !valid {
+			t.Errorf("GenerateVerifier() contains invalid character %q", ch)
+			break
+		}
+	}
+
+	// Verify two calls produce different results
+	verifier2 := oauth2.GenerateVerifier()
+	if verifier1 == verifier2 {
+		t.Errorf("GenerateVerifier() produced identical values on consecutive calls: %s", verifier1)
+	}
+}
+
+func TestPKCEChallengeInAuthURL(t *testing.T) {
+	t.Parallel()
+
+	// Create a minimal oauth2.Config with fake endpoints
+	cfg := &oauth2.Config{
+		ClientID:     "test-client-id",
+		ClientSecret: "test-secret",
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://auth.example.com/authorize",
+			TokenURL: "https://auth.example.com/token",
+		},
+		Scopes: []string{"scope1"},
+	}
+
+	// Generate PKCE verifier
+	verifier := oauth2.GenerateVerifier()
+
+	// Generate state
+	state, err := generateState()
+	if err != nil {
+		t.Fatalf("generateState() error = %v, want nil", err)
+	}
+
+	// Call AuthCodeURL with PKCE challenge option
+	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline,
+		oauth2.S256ChallengeOption(verifier))
+
+	// Parse the URL
+	parsedURL, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatalf("failed to parse auth URL: %v", err)
+	}
+
+	// Extract query parameters
+	params := parsedURL.Query()
+
+	// Verify code_challenge parameter exists and is non-empty
+	codeChallenge := params.Get("code_challenge")
+	if codeChallenge == "" {
+		t.Error("code_challenge query parameter is missing or empty")
+	}
+
+	// Verify code_challenge_method parameter equals S256
+	codeChallengeMethod := params.Get("code_challenge_method")
+	if codeChallengeMethod != "S256" {
+		t.Errorf("code_challenge_method = %q, want %q", codeChallengeMethod, "S256")
+	}
+
+	// Verify state parameter equals the generated state
+	stateParam := params.Get("state")
+	if stateParam != state {
+		t.Errorf("state parameter = %q, want %q", stateParam, state)
+	}
+
+	// Verify other expected parameters
+	if params.Get("client_id") != "test-client-id" {
+		t.Errorf("client_id = %q, want %q", params.Get("client_id"), "test-client-id")
+	}
+	if params.Get("response_type") != "code" {
+		t.Errorf("response_type = %q, want %q", params.Get("response_type"), "code")
+	}
+	if params.Get("access_type") != "offline" {
+		t.Errorf("access_type = %q, want %q", params.Get("access_type"), "offline")
 	}
 }
