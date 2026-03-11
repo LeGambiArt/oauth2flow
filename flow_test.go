@@ -2,10 +2,14 @@ package oauth2flow
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/oauth2"
 )
 
 func TestGenerateState(t *testing.T) {
@@ -356,5 +360,231 @@ func TestLoadClientCredentials_FileNotFound(t *testing.T) {
 	_, err := LoadClientCredentials(credFile, nil)
 	if err == nil {
 		t.Error("LoadClientCredentials() error = nil, want error for nonexistent file")
+	}
+}
+
+func TestSaveToken_BasicFunctionality(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	tokenPath := filepath.Join(tmpDir, "token.json")
+
+	expiry := time.Now().Add(time.Hour)
+	tok := &oauth2.Token{
+		AccessToken:  "test-access-token",
+		RefreshToken: "test-refresh-token",
+		TokenType:    "Bearer",
+		Expiry:       expiry,
+	}
+
+	err := SaveToken(tokenPath, tok)
+	if err != nil {
+		t.Fatalf("SaveToken() error = %v, want nil", err)
+	}
+
+	// Verify file exists
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("token file does not exist: %v", err)
+	}
+
+	// Verify file has 0600 permissions
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("token file permissions = %o, want 0600", info.Mode().Perm())
+	}
+
+	// Read and verify content
+	data, err := os.ReadFile(tokenPath) //nolint:gosec // reading test file in temp directory
+	if err != nil {
+		t.Fatalf("failed to read token file: %v", err)
+	}
+
+	var tj TokenJSON
+	if err := json.Unmarshal(data, &tj); err != nil {
+		t.Fatalf("failed to unmarshal token: %v", err)
+	}
+
+	if tj.AccessToken != "test-access-token" {
+		t.Errorf("AccessToken = %q, want %q", tj.AccessToken, "test-access-token")
+	}
+	if tj.RefreshToken != "test-refresh-token" {
+		t.Errorf("RefreshToken = %q, want %q", tj.RefreshToken, "test-refresh-token")
+	}
+	if tj.TokenType != "Bearer" {
+		t.Errorf("TokenType = %q, want %q", tj.TokenType, "Bearer")
+	}
+	if tj.Expiry == "" {
+		t.Error("Expiry is empty, want RFC3339 timestamp")
+	}
+
+	// Verify expiry can be parsed
+	parsedExpiry, err := time.Parse(time.RFC3339, tj.Expiry)
+	if err != nil {
+		t.Errorf("Expiry is not valid RFC3339: %v", err)
+	}
+	// Allow 1 second difference due to rounding
+	if parsedExpiry.Sub(expiry).Abs() > time.Second {
+		t.Errorf("Expiry = %v, want %v", parsedExpiry, expiry)
+	}
+}
+
+func TestSaveToken_CreatesParentDirectory(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	tokenPath := filepath.Join(tmpDir, "subdir", "nested", "token.json")
+
+	tok := &oauth2.Token{
+		AccessToken: "test-token",
+	}
+
+	err := SaveToken(tokenPath, tok)
+	if err != nil {
+		t.Fatalf("SaveToken() error = %v, want nil", err)
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(tokenPath); err != nil {
+		t.Errorf("token file does not exist: %v", err)
+	}
+
+	// Verify parent directories were created
+	parentDir := filepath.Dir(tokenPath)
+	if _, err := os.Stat(parentDir); err != nil {
+		t.Errorf("parent directory does not exist: %v", err)
+	}
+}
+
+func TestSaveToken_ZeroExpiryOmitted(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	tokenPath := filepath.Join(tmpDir, "token.json")
+
+	tok := &oauth2.Token{
+		AccessToken: "test-token",
+		Expiry:      time.Time{}, // zero value
+	}
+
+	err := SaveToken(tokenPath, tok)
+	if err != nil {
+		t.Fatalf("SaveToken() error = %v, want nil", err)
+	}
+
+	// Read and verify expiry field is absent
+	data, err := os.ReadFile(tokenPath) //nolint:gosec // reading test file in temp directory
+	if err != nil {
+		t.Fatalf("failed to read token file: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("failed to unmarshal token: %v", err)
+	}
+
+	if _, ok := raw["expiry"]; ok {
+		t.Error("expiry field is present in JSON, want omitted for zero time")
+	}
+}
+
+func TestSaveToken_AtomicBehavior(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	tokenPath := filepath.Join(tmpDir, "token.json")
+
+	// First write
+	tok1 := &oauth2.Token{
+		AccessToken: "first-token",
+	}
+	err := SaveToken(tokenPath, tok1)
+	if err != nil {
+		t.Fatalf("SaveToken() first write error = %v, want nil", err)
+	}
+
+	// Verify no temp files remain
+	tempFiles, err := filepath.Glob(filepath.Join(tmpDir, ".token-*.tmp"))
+	if err != nil {
+		t.Fatalf("failed to glob temp files: %v", err)
+	}
+	if len(tempFiles) > 0 {
+		t.Errorf("found %d temp files after save, want 0: %v", len(tempFiles), tempFiles)
+	}
+
+	// Second write (overwrite)
+	tok2 := &oauth2.Token{
+		AccessToken: "second-token",
+	}
+	err = SaveToken(tokenPath, tok2)
+	if err != nil {
+		t.Fatalf("SaveToken() second write error = %v, want nil", err)
+	}
+
+	// Verify file contains new token
+	data, err := os.ReadFile(tokenPath) //nolint:gosec // reading test file in temp directory
+	if err != nil {
+		t.Fatalf("failed to read token file: %v", err)
+	}
+
+	var tj TokenJSON
+	if err := json.Unmarshal(data, &tj); err != nil {
+		t.Fatalf("failed to unmarshal token: %v", err)
+	}
+
+	if tj.AccessToken != "second-token" {
+		t.Errorf("AccessToken = %q, want %q", tj.AccessToken, "second-token")
+	}
+
+	// Verify no temp files remain after overwrite
+	tempFiles, err = filepath.Glob(filepath.Join(tmpDir, ".token-*.tmp"))
+	if err != nil {
+		t.Fatalf("failed to glob temp files: %v", err)
+	}
+	if len(tempFiles) > 0 {
+		t.Errorf("found %d temp files after overwrite, want 0: %v", len(tempFiles), tempFiles)
+	}
+}
+
+func TestSaveToken_PermissionsPreserved(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	tokenPath := filepath.Join(tmpDir, "token.json")
+
+	tok := &oauth2.Token{
+		AccessToken: "test-token",
+	}
+
+	// First write
+	err := SaveToken(tokenPath, tok)
+	if err != nil {
+		t.Fatalf("SaveToken() error = %v, want nil", err)
+	}
+
+	// Check permissions
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("first write permissions = %o, want 0600", info.Mode().Perm())
+	}
+
+	// Overwrite
+	tok2 := &oauth2.Token{
+		AccessToken: "new-token",
+	}
+	err = SaveToken(tokenPath, tok2)
+	if err != nil {
+		t.Fatalf("SaveToken() overwrite error = %v, want nil", err)
+	}
+
+	// Check permissions after overwrite
+	info, err = os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("stat after overwrite failed: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("overwrite permissions = %o, want 0600", info.Mode().Perm())
 	}
 }
