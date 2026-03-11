@@ -112,8 +112,10 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	// Generate consent URL
-	authURL := oauthCfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	// Generate PKCE verifier and consent URL
+	verifier := oauth2.GenerateVerifier()
+	authURL := oauthCfg.AuthCodeURL(state, oauth2.AccessTypeOffline,
+		oauth2.S256ChallengeOption(verifier))
 
 	// Open browser
 	if err := OpenBrowser(authURL); err != nil {
@@ -131,7 +133,7 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 	}
 
 	// Exchange code for token
-	tok, err := oauthCfg.Exchange(ctx, code)
+	tok, err := oauthCfg.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("exchange code for token: %w", err)
 	}
