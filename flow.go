@@ -87,10 +87,12 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 			if errMsg == "" {
 				errMsg = "no authorization code received"
 			}
-			_, _ = fmt.Fprintf(w, "<html><body><h2>Authorization failed</h2><p>%s</p></body></html>", errMsg)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = fmt.Fprint(w, "<html><body><h2>Authorization failed</h2><p>Check terminal for details.</p></body></html>")
 			errCh <- fmt.Errorf("authorization failed: %s", errMsg)
 			return
 		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprint(w, "<html><body><h2>Authorization successful</h2><p>You can close this tab.</p><script>window.close()</script></body></html>")
 		codeCh <- code
 	})
