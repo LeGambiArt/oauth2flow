@@ -158,9 +158,10 @@ type TokenJSON struct {
 	Expiry       string `json:"expiry,omitempty"`
 }
 
-// SaveToken writes an OAuth2 token to disk in JSON format with
-// restrictive permissions (0600). Parent directories are created
-// with 0700 permissions.
+// SaveToken writes an OAuth2 token to disk in JSON format using
+// atomic file replacement. The token is written to a temporary file,
+// synced, and renamed to the target path. Parent directories are
+// created with 0700 permissions; the token file gets 0600.
 func SaveToken(path string, tok *oauth2.Token) error {
 	tj := TokenJSON{
 		AccessToken:  tok.AccessToken,
@@ -181,7 +182,30 @@ func SaveToken(path string, tok *oauth2.Token) error {
 		return fmt.Errorf("create token dir: %w", err)
 	}
 
-	return os.WriteFile(path, data, 0o600)
+	f, err := os.CreateTemp(dir, ".token-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup on failure
+
+	if _, err := f.Write(data); err != nil {
+		f.Close() //nolint:errcheck,gosec // already handling write error
+		return fmt.Errorf("write token: %w", err)
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close() //nolint:errcheck,gosec // already handling chmod error
+		return fmt.Errorf("set token permissions: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close() //nolint:errcheck,gosec // already handling sync error
+		return fmt.Errorf("sync token: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close token: %w", err)
+	}
+
+	return os.Rename(tmpPath, path)
 }
 
 // LoadClientCredentials reads an OAuth2 client credentials JSON file
