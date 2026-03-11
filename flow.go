@@ -52,14 +52,15 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 		return nil, fmt.Errorf("load client credentials: %w", err)
 	}
 
-	// Find available port for callback server
-	port := cfg.Port
-	if port == 0 {
-		port, err = findAvailablePort()
-		if err != nil {
-			return nil, fmt.Errorf("find available port: %w", err)
-		}
+	// Create listener for callback server
+	addr := fmt.Sprintf("localhost:%d", cfg.Port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
+	defer listener.Close() //nolint:errcheck // best-effort cleanup; Shutdown handles graceful close
+
+	port := listener.Addr().(*net.TCPAddr).Port
 	oauthCfg.RedirectURL = fmt.Sprintf("http://localhost:%d/callback", port)
 
 	// Generate cryptographically random state for CSRF protection
@@ -98,13 +99,12 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 	})
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf("localhost:%d", port),
 		Handler:           mux,
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("callback server: %w", err)
 		}
 	}()
@@ -241,14 +241,4 @@ func generateState() (string, error) {
 		return "", fmt.Errorf("read random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
-}
-
-func findAvailablePort() (int, error) {
-	l, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		return 0, err
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port, nil
 }
