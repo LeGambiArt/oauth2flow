@@ -8,6 +8,8 @@ package oauth2flow
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -60,6 +62,12 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 	}
 	oauthCfg.RedirectURL = fmt.Sprintf("http://localhost:%d/callback", port)
 
+	// Generate cryptographically random state for CSRF protection
+	state, err := generateState()
+	if err != nil {
+		return nil, fmt.Errorf("generate state: %w", err)
+	}
+
 	// Channel to receive the authorization code
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -67,6 +75,12 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 	// Start local callback server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != state {
+			http.Error(w, "invalid state parameter", http.StatusForbidden)
+			errCh <- fmt.Errorf("callback state mismatch (possible CSRF)")
+			return
+		}
+
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			errMsg := r.URL.Query().Get("error")
@@ -99,7 +113,7 @@ func Run(ctx context.Context, cfg Config) (*oauth2.Token, error) {
 	}()
 
 	// Generate consent URL
-	authURL := oauthCfg.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	authURL := oauthCfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
 
 	// Open browser
 	if err := OpenBrowser(authURL); err != nil {
@@ -215,6 +229,14 @@ func loadClientCredentials(path string, scopes []string) (*oauth2.Config, error)
 			TokenURL: cd.TokenURI,
 		},
 	}, nil
+}
+
+func generateState() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func findAvailablePort() (int, error) {
