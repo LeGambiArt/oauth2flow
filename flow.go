@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -248,6 +249,16 @@ func loadClientCredentials(path string, scopes []string) (*oauth2.Config, error)
 		return nil, fmt.Errorf("no 'installed' or 'web' credentials found in %s", path)
 	}
 
+	if cd.ClientID == "" {
+		return nil, fmt.Errorf("client_id is empty in %s", path)
+	}
+	if err := validateEndpointURL(cd.AuthURI, "auth_uri"); err != nil {
+		return nil, err
+	}
+	if err := validateEndpointURL(cd.TokenURI, "token_uri"); err != nil {
+		return nil, err
+	}
+
 	return &oauth2.Config{
 		ClientID:     cd.ClientID,
 		ClientSecret: cd.ClientSecret,
@@ -265,4 +276,18 @@ func generateState() (string, error) {
 		return "", fmt.Errorf("read random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func validateEndpointURL(raw, field string) error {
+	if raw == "" {
+		return fmt.Errorf("%s is empty", field)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL: %w", field, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("%s must use https scheme, got %q", field, u.Scheme)
+	}
+	return nil
 }
