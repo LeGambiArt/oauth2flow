@@ -22,9 +22,9 @@ func OpenBrowser(rawURL string) error {
 
 	switch runtime.GOOS {
 	case "linux":
-		cmd = exec.Command("xdg-open", rawURL)
+		cmd = exec.Command("xdg-open", rawURL) //nolint:gosec // URL is package-generated from an https-validated endpoint
 	case "darwin":
-		cmd = exec.Command("open", rawURL)
+		cmd = exec.Command("open", rawURL) //nolint:gosec // URL is package-generated from an https-validated endpoint
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
