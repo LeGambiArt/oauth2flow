@@ -632,7 +632,7 @@ func TestPKCEChallengeInAuthURL(t *testing.T) {
 	cfg := &oauth2.Config{
 		ClientID:     "test-client-id",
 		ClientSecret: "test-secret",
-		Endpoint: oauth2.Endpoint{
+		Endpoint: oauth2.Endpoint{ //nolint:gosec // test fixture with fake endpoints
 			AuthURL:  "https://auth.example.com/authorize",
 			TokenURL: "https://auth.example.com/token",
 		},
